@@ -1,0 +1,360 @@
+{
+  "name": "SMS Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "datalogger-sms",
+        "options": {
+          "responseCode": {
+            "values": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1024,
+        144
+      ],
+      "id": "896c1f8d-bdb3-44d7-8166-18fb93a24661",
+      "name": "Webhook",
+      "webhookId": "af51632c-fd13-4e5e-ba98-8294ff0b9b95"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read the Telerivet webhook body\nconst body = $json.body ?? {};\n\n// Extract basic Telerivet fields\nconst rawMessage = String(body.content ?? '').trim();\nconst telerivetMessageId = String(body.id ?? '');\nconst senderNumber = String(body.from_number ?? '');\nconst receiverNumber = String(body.to_number ?? '');\nconst webhookEvent = String(body.event ?? '');\nconst direction = String(body.direction ?? '');\n\n// Expected SMS format:\n// BBS-MCS AUTO-2 : PFC-1 NORTH Track Feed Charger Failure  01/31/2025 07:25:35\n// BBS-MCS AUTO-2 : PFC-1 NORTH Track Feed Charger Restored 01/31/2025 07:32:36\n\nconst pattern =\n  /^(.*?)\\s*:\\s*(.*?)\\s+(Failure|Restored)\\s+(\\d{2}\\/\\d{2}\\/\\d{4}\\s+\\d{2}:\\d{2}:\\d{2})\\s*$/i;\n\nconst match = rawMessage.match(pattern);\n\n// Return a controlled error instead of stopping the workflow\nif (!match) {\n  return {\n    parsed_successfully: false,\n    parse_error: 'SMS format not recognised',\n\n    raw_message: rawMessage,\n    telerivet_message_id: telerivetMessageId,\n    sender_number: senderNumber,\n    receiver_number: receiverNumber,\n\n    webhook_event: webhookEvent,\n    direction\n  };\n}\n\n// Extract parts of the SMS\nconst locationName = match[1].trim();\nconst assetName = match[2].trim();\nconst eventText = match[3].trim().toUpperCase();\nconst dateTimeText = match[4].trim();\n\n// Datalogger format is MM/DD/YYYY HH:mm:ss\nconst eventDateTime = DateTime.fromFormat(\n  dateTimeText,\n  'MM/dd/yyyy HH:mm:ss',\n  {\n    zone: 'Asia/Kolkata',\n    locale: 'en'\n  }\n);\n\n// Validate the embedded date and time\nif (!eventDateTime.isValid) {\n  return {\n    parsed_successfully: false,\n    parse_error: `Invalid datalogger date/time: ${dateTimeText}`,\n\n    raw_message: rawMessage,\n    telerivet_message_id: telerivetMessageId,\n    sender_number: senderNumber,\n    receiver_number: receiverNumber\n  };\n}\n\n// Standardise the event name\nconst eventType =\n  eventText === 'FAILURE'\n    ? 'FAILURE'\n    : 'RESTORED';\n\n// Status generated from the SMS\nconst status =\n  eventType === 'FAILURE'\n    ? 'OPEN'\n    : 'RECTIFIED';\n\n// A standard key used to match Failure and Restored SMS\nconst assetKey = `${locationName}|${assetName}`\n  .toUpperCase()\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nreturn {\n  parsed_successfully: true,\n\n  telerivet_message_id: telerivetMessageId,\n  sender_number: senderNumber,\n  receiver_number: receiverNumber,\n\n  location_name: locationName,\n  asset_name: assetName,\n  asset_key: assetKey,\n\n  event_type: eventType,\n  status,\n\n  event_time_text: dateTimeText,\n  event_time: eventDateTime.toISO(),\n  event_time_sql: eventDateTime.toFormat('yyyy-MM-dd HH:mm:ss'),\n\n  raw_message: rawMessage,\n\n  webhook_event: webhookEvent,\n  direction,\n\n  processed_at: DateTime.now()\n    .setZone('Asia/Kolkata')\n    .toISO()\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        144
+      ],
+      "id": "97c71a7b-d70c-424a-a12c-b36a977c602a",
+      "name": "Parse Datalogger SMS"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f491630a-1719-4b2c-8b44-038498cfeec8",
+              "leftValue": "={{ $json.parsed_successfully }}",
+              "rightValue": "is true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -624,
+        144
+      ],
+      "id": "87fb02bd-75ce-41d1-a051-35e9786a7e2e",
+      "name": "SMS Parsed Successfully?"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.event_type }}",
+                    "rightValue": "FAILURE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "9f8ea296-ff37-43bb-ac30-08870f9c9854"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Failure"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "10823756-2b11-442d-9cbd-4a06f0b6b381",
+                    "leftValue": "={{ $json.event_type }}",
+                    "rightValue": "RESTORED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Restored"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -416,
+        48
+      ],
+      "id": "8f844a8f-1d7d-4d5a-9910-9edc019c5412",
+      "name": "Failure or Restoration?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH logged_sms AS (\n    INSERT INTO sms_event_log (\n        telerivet_message_id,\n        sender_number,\n        receiver_number,\n        location_name,\n        asset_name,\n        asset_key,\n        event_type,\n        event_time,\n        raw_message\n    )\n    VALUES (\n        $1,\n        $2,\n        $3,\n        $4,\n        $5,\n        $6,\n        $7,\n        $8::timestamptz,\n        $9\n    )\n    ON CONFLICT (telerivet_message_id)\n    DO NOTHING\n    RETURNING id\n)\n\nUPDATE fault_incidents\nSET\n    status = 'RECTIFIED',\n    restoration_time = $8::timestamptz,\n    restoration_message = $9,\n    restoration_sms_id = $1,\n\n    downtime_seconds = EXTRACT(\n        EPOCH FROM (\n            $8::timestamptz - failure_time\n        )\n    )::bigint,\n\n    updated_at = NOW()\n\nWHERE id = (\n    SELECT id\n    FROM fault_incidents\n    WHERE\n        asset_key = $6\n        AND status = 'OPEN'\n        AND failure_time <= $8::timestamptz\n    ORDER BY failure_time DESC\n    LIMIT 1\n)\n\nRETURNING\n    id,\n    location_name,\n    asset_name,\n    status,\n    failure_time,\n    restoration_time,\n    downtime_seconds;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.telerivet_message_id,\n  $json.sender_number,\n  $json.receiver_number,\n  $json.location_name,\n  $json.asset_name,\n  $json.asset_key,\n  $json.event_type,\n  $json.event_time,\n  $json.raw_message\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -208,
+        144
+      ],
+      "id": "e50e9472-736e-4d24-bd64-4ae7205e40ac",
+      "name": "Close Failure Incident",
+      "credentials": {
+        "postgres": {
+          "id": "XelVj2yxI11HVHmE",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH logged_sms AS (\n    INSERT INTO sms_event_log (\n        telerivet_message_id,\n        sender_number,\n        receiver_number,\n        location_name,\n        asset_name,\n        asset_key,\n        event_type,\n        event_time,\n        raw_message\n    )\n    VALUES (\n        $1,\n        $2,\n        $3,\n        $4,\n        $5,\n        $6,\n        $7,\n        $8::timestamptz,\n        $9\n    )\n    ON CONFLICT (telerivet_message_id)\n    DO NOTHING\n    RETURNING id\n)\n\nINSERT INTO fault_incidents (\n    location_name,\n    asset_name,\n    asset_key,\n    status,\n    failure_time,\n    failure_message,\n    failure_sms_id,\n    sender_number\n)\nVALUES (\n    $4,\n    $5,\n    $6,\n    'OPEN',\n    $8::timestamptz,\n    $9,\n    $1,\n    $2\n)\nON CONFLICT DO NOTHING\nRETURNING\n    id,\n    location_name,\n    asset_name,\n    status,\n    failure_time;",
+        "options": {
+          "queryReplacement": "={{ [\n  $json.telerivet_message_id,\n  $json.sender_number,\n  $json.receiver_number,\n  $json.location_name,\n  $json.asset_name,\n  $json.asset_key,\n  $json.event_type,\n  $json.event_time,\n  $json.raw_message\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -208,
+        -32
+      ],
+      "id": "b4a1978e-a1e8-4305-9718-1fbe00aa848b",
+      "name": "Create Failure Incident",
+      "credentials": {
+        "postgres": {
+          "id": "XelVj2yxI11HVHmE",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "datalogger-dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -832,
+        336
+      ],
+      "id": "270161d5-ed8e-4ed5-b80f-d6a3c49f1cef",
+      "name": "Datalogger Fault Dashboard",
+      "webhookId": "2585cc0d-296d-44f6-898f-37655c1e207e"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    id,\n    location_name,\n    asset_name,\n    status,\n\n    failure_time AT TIME ZONE 'Asia/Kolkata'\n        AS failure_time_ist,\n\n    restoration_time AT TIME ZONE 'Asia/Kolkata'\n        AS restoration_time_ist,\n\n    downtime_seconds,\n\n    CASE\n        WHEN status = 'OPEN'\n        THEN EXTRACT(EPOCH FROM (NOW() - failure_time))::bigint\n        ELSE downtime_seconds\n    END AS effective_downtime_seconds,\n\n    COUNT(*) FILTER (WHERE status = 'OPEN')\n        OVER () AS total_open_faults,\n\n    COUNT(*) FILTER (\n        WHERE failure_time >=\n        (\n            date_trunc(\n                'day',\n                NOW() AT TIME ZONE 'Asia/Kolkata'\n            ) AT TIME ZONE 'Asia/Kolkata'\n        )\n    ) OVER () AS failures_today,\n\n    COUNT(*) FILTER (\n        WHERE status = 'RECTIFIED'\n        AND restoration_time >=\n        (\n            date_trunc(\n                'day',\n                NOW() AT TIME ZONE 'Asia/Kolkata'\n            ) AT TIME ZONE 'Asia/Kolkata'\n        )\n    ) OVER () AS rectified_today,\n\n    AVG(downtime_seconds) FILTER (\n        WHERE status = 'RECTIFIED'\n    ) OVER () AS average_downtime_seconds\n\nFROM fault_incidents\nORDER BY\n    CASE WHEN status = 'OPEN' THEN 0 ELSE 1 END,\n    failure_time DESC\n\nLIMIT 500;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -640,
+        336
+      ],
+      "id": "56392f70-7637-48cc-8325-f03832a3a831",
+      "name": "Fetch Dashboard Data",
+      "credentials": {
+        "postgres": {
+          "id": "XelVj2yxI11HVHmE",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(item => item.json);\n\nconst escapeHtml = (value) => String(value ?? '')\n  .replaceAll('&', '&amp;')\n  .replaceAll('<', '&lt;')\n  .replaceAll('>', '&gt;')\n  .replaceAll('\"', '&quot;')\n  .replaceAll(\"'\", '&#039;');\n\nconst formatDuration = (value) => {\n  let seconds = Math.max(0, Number(value || 0));\n\n  const days = Math.floor(seconds / 86400);\n  seconds %= 86400;\n\n  const hours = Math.floor(seconds / 3600);\n  seconds %= 3600;\n\n  const minutes = Math.floor(seconds / 60);\n  seconds = Math.floor(seconds % 60);\n\n  return [\n    days ? `${days}d` : '',\n    hours ? `${hours}h` : '',\n    minutes ? `${minutes}m` : '',\n    `${seconds}s`,\n  ].filter(Boolean).join(' ');\n};\n\nconst first = rows[0] || {};\n\nconst totalOpen = Number(first.total_open_faults || 0);\nconst failuresToday = Number(first.failures_today || 0);\nconst rectifiedToday = Number(first.rectified_today || 0);\nconst averageDowntime = Number(first.average_downtime_seconds || 0);\n\nconst openFaults = rows.filter(row => row.status === 'OPEN');\nconst rectifiedFaults = rows\n  .filter(row => row.status === 'RECTIFIED')\n  .slice(0, 100);\n\nconst createRows = (records, isOpen) => {\n  if (!records.length) {\n    return `\n      <tr>\n        <td colspan=\"6\" class=\"empty\">\n          ${isOpen\n            ? 'No open faults. All monitored assets are restored.'\n            : 'No rectified incidents found.'}\n        </td>\n      </tr>\n    `;\n  }\n\n  return records.map(row => `\n    <tr>\n      <td class=\"location\">${escapeHtml(row.location_name)}</td>\n      <td>${escapeHtml(row.asset_name)}</td>\n      <td>${escapeHtml(row.failure_time_ist || '—')}</td>\n\n      ${isOpen ? '' : `\n        <td>${escapeHtml(row.restoration_time_ist || '—')}</td>\n      `}\n\n      <td class=\"duration\">\n        ${formatDuration(row.effective_downtime_seconds)}\n      </td>\n\n      <td>\n        <span class=\"status ${isOpen ? 'open' : 'rectified'}\">\n          ${escapeHtml(row.status)}\n        </span>\n      </td>\n    </tr>\n  `).join('');\n};\n\nconst html = `\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta\n    name=\"viewport\"\n    content=\"width=device-width, initial-scale=1.0\"\n  >\n\n  <title>Datalogger Fault Monitoring System</title>\n\n  <style>\n    :root {\n      --navy: #0b1f3a;\n      --navy-light: #123968;\n      --background: #eef2f7;\n      --surface: #ffffff;\n      --border: #dfe5ed;\n      --text: #14243b;\n      --muted: #667085;\n      --red: #c72c41;\n      --green: #16835b;\n      --amber: #d97706;\n    }\n\n    * {\n      box-sizing: border-box;\n    }\n\n    body {\n      margin: 0;\n      background: var(--background);\n      color: var(--text);\n      font-family:\n        Arial,\n        Helvetica,\n        sans-serif;\n    }\n\n    main {\n      max-width: 1500px;\n      margin: auto;\n      padding: 22px;\n    }\n\n    header {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 20px;\n\n      padding: 27px 30px;\n      border-radius: 18px;\n\n      color: white;\n      background:\n        linear-gradient(\n          120deg,\n          var(--navy),\n          var(--navy-light)\n        );\n\n      box-shadow:\n        0 14px 36px rgba(11, 31, 58, 0.18);\n    }\n\n    header h1 {\n      margin: 5px 0;\n      font-size: clamp(25px, 3vw, 40px);\n    }\n\n    header p {\n      margin: 0;\n      color: #cbd8eb;\n    }\n\n    .eyebrow {\n      margin: 0;\n      color: #86b6ff;\n      font-size: 11px;\n      font-weight: 800;\n      letter-spacing: 0.15em;\n    }\n\n    .live {\n      white-space: nowrap;\n      padding: 10px 14px;\n\n      border:\n        1px solid rgba(255, 255, 255, 0.25);\n\n      border-radius: 999px;\n\n      font-size: 12px;\n      font-weight: bold;\n    }\n\n    .live-dot {\n      display: inline-block;\n      width: 9px;\n      height: 9px;\n      margin-right: 8px;\n      border-radius: 50%;\n      background: #37d67a;\n    }\n\n    .cards {\n      display: grid;\n      grid-template-columns: repeat(4, 1fr);\n      gap: 15px;\n      margin: 18px 0;\n    }\n\n    .card,\n    .panel {\n      background: var(--surface);\n      border: 1px solid var(--border);\n      border-radius: 15px;\n\n      box-shadow:\n        0 7px 22px rgba(15, 35, 65, 0.06);\n    }\n\n    .card {\n      padding: 20px;\n    }\n\n    .card span {\n      color: var(--muted);\n      font-weight: bold;\n    }\n\n    .card strong {\n      display: block;\n      margin-top: 9px;\n      color: var(--navy);\n      font-size: 31px;\n    }\n\n    .card.red {\n      border-top: 4px solid var(--red);\n    }\n\n    .card.red strong {\n      color: var(--red);\n    }\n\n    .card.green {\n      border-top: 4px solid var(--green);\n    }\n\n    .card.green strong {\n      color: var(--green);\n    }\n\n    .toolbar {\n      display: flex;\n      gap: 10px;\n      margin-bottom: 17px;\n    }\n\n    .toolbar input,\n    .toolbar select,\n    .toolbar button {\n      padding: 11px 13px;\n\n      border: 1px solid var(--border);\n      border-radius: 9px;\n\n      background: white;\n      font: inherit;\n    }\n\n    .toolbar input {\n      flex: 1;\n    }\n\n    .toolbar button {\n      background: var(--navy);\n      color: white;\n      font-weight: bold;\n      cursor: pointer;\n    }\n\n    .panel {\n      margin-bottom: 17px;\n      overflow: hidden;\n    }\n\n    .panel.alert {\n      border-top: 4px solid var(--red);\n    }\n\n    .panel-heading {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n\n      padding: 17px 19px;\n      border-bottom: 1px solid var(--border);\n    }\n\n    .panel-heading h2 {\n      margin: 3px 0 0;\n      font-size: 20px;\n    }\n\n    .count {\n      min-width: 38px;\n      padding: 10px 13px;\n\n      border-radius: 12px;\n\n      background: #ffe8eb;\n      color: var(--red);\n\n      text-align: center;\n      font-weight: bold;\n    }\n\n    .table-wrapper {\n      overflow: auto;\n    }\n\n    table {\n      width: 100%;\n      min-width: 900px;\n      border-collapse: collapse;\n    }\n\n    th {\n      padding: 12px 15px;\n\n      background: #f7f9fc;\n      color: #526278;\n\n      text-align: left;\n      text-transform: uppercase;\n      letter-spacing: 0.07em;\n      font-size: 11px;\n    }\n\n    td {\n      padding: 14px 15px;\n      border-top: 1px solid #edf0f4;\n      font-size: 14px;\n    }\n\n    .location {\n      color: var(--navy);\n      font-weight: 800;\n    }\n\n    .duration {\n      font-weight: 800;\n      font-variant-numeric: tabular-nums;\n    }\n\n    .status {\n      padding: 6px 9px;\n      border-radius: 999px;\n\n      font-size: 11px;\n      font-weight: 900;\n    }\n\n    .status.open {\n      background: #ffe7ea;\n      color: #aa1831;\n    }\n\n    .status.rectified {\n      background: #e4f6ef;\n      color: #0b7250;\n    }\n\n    .empty {\n      padding: 34px;\n      color: var(--muted);\n      text-align: center;\n    }\n\n    footer {\n      padding: 13px;\n      color: var(--muted);\n      text-align: center;\n      font-size: 12px;\n    }\n\n    @media (max-width: 900px) {\n      main {\n        padding: 11px;\n      }\n\n      header {\n        align-items: flex-start;\n        flex-direction: column;\n      }\n\n      .cards {\n        grid-template-columns: 1fr 1fr;\n      }\n\n      .toolbar {\n        flex-wrap: wrap;\n      }\n\n      .toolbar input {\n        width: 100%;\n        flex-basis: 100%;\n      }\n    }\n\n    @media (max-width: 520px) {\n      .cards {\n        grid-template-columns: 1fr;\n      }\n    }\n  </style>\n</head>\n\n<body>\n  <main>\n    <header>\n      <div>\n        <p class=\"eyebrow\">\n          SIGNAL & TELECOMMUNICATIONS\n        </p>\n\n        <h1>\n          Datalogger Fault Monitoring System\n        </h1>\n\n        <p>\n          Live failure, restoration and downtime monitoring\n        </p>\n      </div>\n\n      <div class=\"live\">\n        <span class=\"live-dot\"></span>\n        LIVE · AUTO REFRESH 20s\n      </div>\n    </header>\n\n    <section class=\"cards\">\n      <article class=\"card red\">\n        <span>Open Faults</span>\n        <strong>${totalOpen}</strong>\n      </article>\n\n      <article class=\"card\">\n        <span>Failures Today</span>\n        <strong>${failuresToday}</strong>\n      </article>\n\n      <article class=\"card green\">\n        <span>Rectified Today</span>\n        <strong>${rectifiedToday}</strong>\n      </article>\n\n      <article class=\"card\">\n        <span>Average Downtime</span>\n        <strong>${formatDuration(averageDowntime)}</strong>\n      </article>\n    </section>\n\n    <div class=\"toolbar\">\n      <input\n        id=\"searchBox\"\n        type=\"search\"\n        placeholder=\"Search location or asset...\"\n        oninput=\"filterRows()\"\n      >\n\n      <select\n        id=\"statusFilter\"\n        onchange=\"filterRows()\"\n      >\n        <option value=\"ALL\">All statuses</option>\n        <option value=\"OPEN\">Open</option>\n        <option value=\"RECTIFIED\">Rectified</option>\n      </select>\n\n      <button onclick=\"window.location.reload()\">\n        Refresh now\n      </button>\n    </div>\n\n    <section class=\"panel alert\">\n      <div class=\"panel-heading\">\n        <div>\n          <p class=\"eyebrow\">ATTENTION REQUIRED</p>\n          <h2>Live Open Faults</h2>\n        </div>\n\n        <div class=\"count\">\n          ${openFaults.length}\n        </div>\n      </div>\n\n      <div class=\"table-wrapper\">\n        <table id=\"openTable\">\n          <thead>\n            <tr>\n              <th>Location</th>\n              <th>Asset</th>\n              <th>Failure Time (IST)</th>\n              <th>Open Duration</th>\n              <th>Status</th>\n            </tr>\n          </thead>\n\n          <tbody>\n            ${createRows(openFaults, true)}\n          </tbody>\n        </table>\n      </div>\n    </section>\n\n    <section class=\"panel\">\n      <div class=\"panel-heading\">\n        <div>\n          <p class=\"eyebrow\">RESTORATION HISTORY</p>\n          <h2>Recently Rectified Faults</h2>\n        </div>\n      </div>\n\n      <div class=\"table-wrapper\">\n        <table id=\"rectifiedTable\">\n          <thead>\n            <tr>\n              <th>Location</th>\n              <th>Asset</th>\n              <th>Failure Time (IST)</th>\n              <th>Restoration Time (IST)</th>\n              <th>Downtime</th>\n              <th>Status</th>\n            </tr>\n          </thead>\n\n          <tbody>\n            ${createRows(rectifiedFaults, false)}\n          </tbody>\n        </table>\n      </div>\n    </section>\n\n    <footer>\n      Generated by n8n · Data source: Neon PostgreSQL\n    </footer>\n  </main>\n\n  <script>\n    function filterRows() {\n      const search =\n        document\n          .getElementById('searchBox')\n          .value\n          .toLowerCase();\n\n      const status =\n        document\n          .getElementById('statusFilter')\n          .value;\n\n      const rows =\n        document.querySelectorAll(\n          '#openTable tbody tr, #rectifiedTable tbody tr'\n        );\n\n      rows.forEach(row => {\n        const text = row.innerText.toLowerCase();\n\n        const rowStatus =\n          text.includes('rectified')\n            ? 'RECTIFIED'\n            : text.includes('open')\n              ? 'OPEN'\n              : '';\n\n        const searchMatch =\n          !search || text.includes(search);\n\n        const statusMatch =\n          status === 'ALL' || rowStatus === status;\n\n        row.style.display =\n          searchMatch && statusMatch\n            ? ''\n            : 'none';\n      });\n    }\n\n    setTimeout(() => {\n      window.location.reload();\n    }, 20000);\n  </script>\n</body>\n</html>\n`;\n\nreturn [\n  {\n    json: {\n      html\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        336
+      ],
+      "id": "b84b6508-e621-4268-8849-6f6d0ef77abc",
+      "name": "Build Dashboard HTML"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -224,
+        336
+      ],
+      "id": "3208b9f9-18e9-456b-8683-c732a0404fbc",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Datalogger SMS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Datalogger SMS": {
+      "main": [
+        [
+          {
+            "node": "SMS Parsed Successfully?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SMS Parsed Successfully?": {
+      "main": [
+        [
+          {
+            "node": "Failure or Restoration?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failure or Restoration?": {
+      "main": [
+        [
+          {
+            "node": "Create Failure Incident",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Close Failure Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Datalogger Fault Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Fetch Dashboard Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Dashboard Data": {
+      "main": [
+        [
+          {
+            "node": "Build Dashboard HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Dashboard HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "02eda3a4-28bf-4371-b76e-211dfeb34b64",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "83427eb3c51a332fd832ba8822e61834664def1db75ae403cbda651a45c4f80d"
+  },
+  "nodeGroups": [],
+  "id": "F1DDko6uem1JIDHk",
+  "tags": []
+}

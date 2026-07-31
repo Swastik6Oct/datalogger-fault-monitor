@@ -35,3 +35,6 @@ Dashboard
 
 - `SMS Dashboard.json` — Exported n8n workflow
 
+## License
+
+MIT

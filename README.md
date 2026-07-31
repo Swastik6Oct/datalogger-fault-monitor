@@ -38,3 +38,13 @@ Dashboard
 ## License
 
 MIT
+
+## 📸 Screenshots
+
+### Workflow
+
+![Workflow](image/Workflow.png)
+
+### Dashboard
+
+![Dashboard](image/dashboard.png)
